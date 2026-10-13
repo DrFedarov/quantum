@@ -59,8 +59,22 @@ static void quantum_disable_interrupts(struct quantum_chip *chip);
 struct quantum_device_entry {
 	const char *card_id;
 	const char *name;
-	/* Rate command only selects 48 kHz (Quantum 2 firmware) */
-	bool fixed_48k;
+	const struct quantum_rate_profile *rate_profiles;
+	unsigned int num_rate_profiles;
+};
+
+/*
+ * Quantum 2 channels per rate, from the owner's manual: ADAT (S/MUX) halves
+ * above 48 kHz; ADAT and S/PDIF are off above 96 kHz, leaving 4 analog in
+ * and 4 line + 2 headphone out.
+ */
+static const struct quantum_rate_profile quantum_2_rates[] = {
+	{  44100, 24, 22 },
+	{  48000, 24, 22 },
+	{  88200, 16, 14 },
+	{  96000, 16, 14 },
+	{ 176400,  6,  4 },
+	{ 192000,  6,  4 },
 };
 
 static const struct quantum_device_entry quantum_2626_model = {
@@ -71,13 +85,14 @@ static const struct quantum_device_entry quantum_2626_model = {
 static const struct quantum_device_entry quantum_2_model = {
 	.card_id = "Quantum2",
 	.name = "PreSonus Quantum 2",
-	.fixed_48k = true,
+	.rate_profiles = quantum_2_rates,
+	.num_rate_profiles = ARRAY_SIZE(quantum_2_rates),
 };
 
 static const struct pci_device_id quantum_ids[] = {
 	{ PCI_DEVICE(0x1c67, 0x0104),
 	  .driver_data = (kernel_ulong_t)&quantum_2626_model },
-	/* Quantum 2 (Thunderbolt 2): channel counts read from hardware */
+	/* Quantum 2 (Thunderbolt 2): rate enum protocol, per-rate channel counts */
 	{ PCI_DEVICE(0x1c67, 0x0102),
 	  .driver_data = (kernel_ulong_t)&quantum_2_model },
 	{ }
@@ -577,7 +592,8 @@ static int snd_quantum_create(struct snd_card *card, struct pci_dev *pci,
 	chip->pci = pci;
 	chip->model_id = model->card_id;
 	chip->model_name = model->name;
-	chip->fixed_48k = model->fixed_48k;
+	chip->rate_profiles = model->rate_profiles;
+	chip->num_rate_profiles = model->num_rate_profiles;
 	chip->irq = -1;
 	atomic_set(&chip->pending_interrupts, 0);
 	chip->device_gone = 0;
@@ -677,6 +693,18 @@ static int snd_quantum_create(struct snd_card *card, struct pci_dev *pci,
 	if (!ret) {
 		chip->tci_ready = true;
 		chip->tci_initialized = true;
+		if (chip->rate_profiles) {
+			unsigned int src, device_rate, clock_rate;
+
+			/* The rate query names the clock source; learn both. */
+			quantum_get_clock_source(chip, &src);
+			if (!quantum_get_sample_rate(chip, &device_rate,
+						     &clock_rate))
+				dev_info(&pci->dev,
+					 "clock source %u, device rate %u Hz, clock rate %u Hz\n",
+					 chip->clock_source, device_rate,
+					 clock_rate);
+		}
 		err = snd_quantum_pcm_new(chip);
 		if (err) {
 			dev_err(&pci->dev, "PCM creation failed: %d\n", err);

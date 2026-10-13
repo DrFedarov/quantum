@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (C) 2026 Nicholas Johnson */
+#include <sound/pcm_params.h>
 #include "quantum.h"
 
 static const unsigned int quantum_rates[] = {
@@ -43,6 +44,62 @@ static int quantum_pcm_hw_rule_period_size(struct snd_pcm_hw_params *params,
 	return snd_interval_list(p, count, list, 0);
 }
 
+/* Channels this stream has at a rate profile (Quantum 2). */
+static unsigned int quantum_profile_channels(struct snd_pcm_substream *ss,
+					     const struct quantum_rate_profile *p)
+{
+	return ss->stream == SNDRV_PCM_STREAM_PLAYBACK ?
+	       p->playback_channels : p->capture_channels;
+}
+
+/* Rate profiles: narrow channels to the rates still allowed, and back. */
+static int quantum_pcm_hw_rule_channels(struct snd_pcm_hw_params *params,
+					struct snd_pcm_hw_rule *rule)
+{
+	struct snd_pcm_substream *ss = rule->private;
+	struct quantum_chip *chip = ss->pcm->private_data;
+	const struct snd_interval *r = hw_param_interval_c(params,
+						SNDRV_PCM_HW_PARAM_RATE);
+	struct snd_interval c = { .min = UINT_MAX, .max = 0, .integer = 1 };
+	unsigned int i, ch;
+
+	for (i = 0; i < chip->num_rate_profiles; i++) {
+		if (!snd_interval_test(r, chip->rate_profiles[i].rate))
+			continue;
+		ch = quantum_profile_channels(ss, &chip->rate_profiles[i]);
+		c.min = min(c.min, ch);
+		c.max = max(c.max, ch);
+	}
+	if (!c.max)
+		return -EINVAL;
+	return snd_interval_refine(hw_param_interval(params,
+				   SNDRV_PCM_HW_PARAM_CHANNELS), &c);
+}
+
+static int quantum_pcm_hw_rule_rate(struct snd_pcm_hw_params *params,
+				    struct snd_pcm_hw_rule *rule)
+{
+	struct snd_pcm_substream *ss = rule->private;
+	struct quantum_chip *chip = ss->pcm->private_data;
+	const struct snd_interval *c = hw_param_interval_c(params,
+						SNDRV_PCM_HW_PARAM_CHANNELS);
+	struct snd_interval r = { .min = UINT_MAX, .max = 0, .integer = 1 };
+	unsigned int i, rate;
+
+	for (i = 0; i < chip->num_rate_profiles; i++) {
+		if (!snd_interval_test(c, quantum_profile_channels(ss,
+						&chip->rate_profiles[i])))
+			continue;
+		rate = chip->rate_profiles[i].rate;
+		r.min = min(r.min, rate);
+		r.max = max(r.max, rate);
+	}
+	if (!r.max)
+		return -EINVAL;
+	return snd_interval_refine(hw_param_interval(params,
+				   SNDRV_PCM_HW_PARAM_RATE), &r);
+}
+
 static int quantum_pcm_open(struct snd_pcm_substream *ss)
 {
 	struct quantum_chip *chip = ss->pcm->private_data;
@@ -68,6 +125,16 @@ static int quantum_pcm_open(struct snd_pcm_substream *ss)
 	if (!channels)
 		return -EIO;
 
+	/* Rate profiles: offer every rate, sized for the widest layout. */
+	if (chip->rate_profiles) {
+		unsigned int i;
+
+		channels = 0;
+		for (i = 0; i < chip->num_rate_profiles; i++)
+			channels = max(channels, quantum_profile_channels(ss,
+						&chip->rate_profiles[i]));
+	}
+
 	runtime->hw.info = SNDRV_PCM_INFO_MMAP |
 			   SNDRV_PCM_INFO_MMAP_VALID |
 			   SNDRV_PCM_INFO_INTERLEAVED |
@@ -81,12 +148,6 @@ static int quantum_pcm_open(struct snd_pcm_substream *ss)
 			    SNDRV_PCM_RATE_192000;
 	runtime->hw.rate_min = 44100;
 	runtime->hw.rate_max = 192000;
-	if (chip->fixed_48k) {
-		/* Quantum 2: SET_SAMPLE_RATE only selects 48 kHz (see quantum_tci.c). */
-		runtime->hw.rates = SNDRV_PCM_RATE_48000;
-		runtime->hw.rate_min = 48000;
-		runtime->hw.rate_max = 48000;
-	}
 	runtime->hw.channels_min = channels;
 	runtime->hw.channels_max = channels;
 	runtime->hw.period_bytes_min = 32 * channels * sizeof(s32);
@@ -105,6 +166,21 @@ static int quantum_pcm_open(struct snd_pcm_substream *ss)
 				  SNDRV_PCM_HW_PARAM_RATE, -1);
 	if (err < 0)
 		return err;
+
+	if (chip->rate_profiles) {
+		runtime->hw.channels_min = 1;
+		err = snd_pcm_hw_rule_add(runtime, 0,
+					  SNDRV_PCM_HW_PARAM_CHANNELS,
+					  quantum_pcm_hw_rule_channels, ss,
+					  SNDRV_PCM_HW_PARAM_RATE, -1);
+		if (err < 0)
+			return err;
+		err = snd_pcm_hw_rule_add(runtime, 0, SNDRV_PCM_HW_PARAM_RATE,
+					  quantum_pcm_hw_rule_rate, ss,
+					  SNDRV_PCM_HW_PARAM_CHANNELS, -1);
+		if (err < 0)
+			return err;
+	}
 
 	err = snd_pcm_hw_constraint_integer(runtime,
 					    SNDRV_PCM_HW_PARAM_PERIODS);
@@ -170,6 +246,10 @@ static int quantum_pcm_hw_params(struct snd_pcm_substream *ss,
 		capture_substream = ss;
 		WRITE_ONCE(chip->capture_configured_substream, ss);
 	}
+
+	/* The vendor driver stops and frees DMA before changing the rate. */
+	if (chip->rate_profiles && chip->sample_rate != rate)
+		quantum_free_dma_resources(chip);
 
 	err = quantum_set_sample_rate(chip, rate);
 	if (err < 0) {

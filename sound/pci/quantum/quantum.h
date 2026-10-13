@@ -105,6 +105,13 @@ enum quantum_clk_source {
 	CLK_SOURCE_EXTERNAL_ADAT2 = 4,
 };
 
+/* Per-rate DMA channel counts, for models that take the rate as an enum */
+struct quantum_rate_profile {
+	unsigned int rate;
+	u8 playback_channels;
+	u8 capture_channels;
+};
+
 struct tci_header {
 	__le16 length;
 	u8 channel;
@@ -166,7 +173,12 @@ struct quantum_chip {
 	void __iomem *iobase;
 	const char *model_id;
 	const char *model_name;
-	bool fixed_48k;
+	/*
+	 * Non-NULL: SET_SAMPLE_RATE takes {clock source, rate enum} and the
+	 * channel counts change with the rate (Quantum 2). NULL: rate in Hz.
+	 */
+	const struct quantum_rate_profile *rate_profiles;
+	unsigned int num_rate_profiles;
 
 	/* Index into index[]/id[]/enable[]; see quantum_release_card_slot(). */
 	int card_slot;
@@ -385,6 +397,10 @@ void quantum_midi_receive(struct quantum_chip *chip, const u8 *payload,
 			  size_t payload_len);
 void quantum_midi_tx_work_handler(struct work_struct *work);
 int quantum_set_sample_rate(struct quantum_chip *chip, unsigned int rate);
+int quantum_get_sample_rate(struct quantum_chip *chip, unsigned int *device_rate,
+			    unsigned int *clock_rate);
+const struct quantum_rate_profile *
+quantum_find_rate_profile(struct quantum_chip *chip, unsigned int rate);
 int quantum_set_clock_source(struct quantum_chip *chip, unsigned int source);
 int quantum_get_clock_source(struct quantum_chip *chip, unsigned int *source);
 int quantum_get_serial_number(struct quantum_chip *chip);

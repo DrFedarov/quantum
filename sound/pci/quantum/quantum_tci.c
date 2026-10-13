@@ -2,10 +2,38 @@
 /* Copyright (C) 2026 Nicholas Johnson */
 #include "quantum.h"
 
-/* Rate order used by the Quantum 2 clock event (1-based). */
+/* TCI rate enum (1-based; 0 = no valid rate), used by the Quantum 2. */
 static const unsigned int quantum_rate_table[] = {
 	44100, 48000, 88200, 96000, 176400, 192000
 };
+
+static unsigned int quantum_rate_from_enum(u32 val)
+{
+	if (val >= 1 && val <= ARRAY_SIZE(quantum_rate_table))
+		return quantum_rate_table[val - 1];
+	return 0;
+}
+
+static u32 quantum_rate_to_enum(unsigned int rate)
+{
+	unsigned int i;
+
+	for (i = 0; i < ARRAY_SIZE(quantum_rate_table); i++)
+		if (quantum_rate_table[i] == rate)
+			return i + 1;
+	return 0;
+}
+
+const struct quantum_rate_profile *
+quantum_find_rate_profile(struct quantum_chip *chip, unsigned int rate)
+{
+	unsigned int i;
+
+	for (i = 0; i < chip->num_rate_profiles; i++)
+		if (chip->rate_profiles[i].rate == rate)
+			return &chip->rate_profiles[i];
+	return NULL;
+}
 
 
 static int quantum_get_tx_slot(struct quantum_chip *chip, u32 *slot)
@@ -179,12 +207,22 @@ void quantum_process_rx_messages(struct quantum_chip *chip)
 							wire_cs);
 						break;
 					}
-					/* The Quantum 2 reports a 1-based rate index. */
-					if (sr >= 1 && sr <= ARRAY_SIZE(quantum_rate_table))
-						sr = quantum_rate_table[sr - 1];
+					/* The Quantum 2 reports a rate enum. */
+					if (quantum_rate_from_enum(sr))
+						sr = quantum_rate_from_enum(sr);
 					dev_dbg(&chip->pci->dev,
 						"clock event: source=%u rate=%u\n",
 						wire_cs - 1, sr);
+					/*
+					 * Quantum 2: the event reports the rate seen on
+					 * one source (S/PDIF lock/unlock too), not a
+					 * source change; only the active source counts.
+					 */
+					if (chip->rate_profiles) {
+						if (wire_cs - 1 == chip->clock_source && sr)
+							chip->sample_rate = sr;
+						break;
+					}
 					chip->clock_source = wire_cs - 1;
 					chip->sample_rate = sr;
 				}
@@ -323,7 +361,7 @@ static int quantum_tci_send_wait(struct quantum_chip *chip, u8 channel,
 
 	if (!ret) {
 		/* Expected: the Quantum 2 ignores a no-op rate change. */
-		if (chip->fixed_48k && channel == TCI_CHAN_CTRL &&
+		if (chip->rate_profiles && channel == TCI_CHAN_CTRL &&
 		    code == TCI_CTRL_SET_SAMPLE_RATE)
 			dev_dbg(&chip->pci->dev,
 				"no reply to SET_SAMPLE_RATE\n");
@@ -422,21 +460,121 @@ int quantum_get_serial_number(struct quantum_chip *chip)
 }
 
 /*
- * Set the sample rate.
- *
- * The 2626 takes the rate in Hz. The Quantum 2 (FPGA image 0x01010017)
- * rejects Hz, and of payloads 0-6 accepts only 1, which selects 48 kHz;
- * every other value gets a non-zero status word and leaves the clock alone.
- * It answers a real change with status 0 (plus a clock event), and does
- * not answer at all when already at 48 kHz. The PCM therefore offers only
- * 48 kHz on this model.
+ * Read the rate (Quantum 2). The request names a clock source; the reply is
+ * the device rate enum, then the rate measured on that source.
  */
+
+int quantum_get_sample_rate(struct quantum_chip *chip, unsigned int *device_rate,
+			    unsigned int *clock_rate)
+{
+	__le32 req = cpu_to_le32(chip->clock_source + 1);
+	__le32 reply[2];
+	size_t len = sizeof(reply);
+	int ret;
+
+	if (chip->tci_fatal_error)
+		return -EIO;
+
+	ret = quantum_tci_send_wait(chip, TCI_CHAN_CTRL,
+				    TCI_CTRL_GET_SAMPLE_RATE,
+				    TCI_CTRL_RSP_SAMPLE_RATE,
+				    &req, sizeof(req), reply, &len, 1000);
+	if (ret < 0)
+		return ret;
+	if (len != sizeof(reply)) {
+		dev_err(&chip->pci->dev, "short sample rate reply (%zu bytes)\n",
+			len);
+		return -EPROTO;
+	}
+
+	*device_rate = quantum_rate_from_enum(le32_to_cpu(reply[0]));
+	*clock_rate = quantum_rate_from_enum(le32_to_cpu(reply[1]));
+	dev_dbg(&chip->pci->dev, "sample rate reply: device %u Hz, clock %u Hz\n",
+		*device_rate, *clock_rate);
+	if (!*device_rate)
+		return -EPROTO;
+
+	chip->sample_rate = *device_rate;
+	return 0;
+}
+
+/*
+ * Set the rate on a Quantum 2: payload {clock source, rate enum}, both
+ * 1-based; reply is a status word, 0 on success. A single-word payload
+ * (what the RFC driver sends) is rejected or ignored. Read the rate back,
+ * then wait for the channel-count register to follow, since the DMA
+ * layout depends on it.
+ */
+
+static int quantum_set_rate_enum(struct quantum_chip *chip, unsigned int rate)
+{
+	const struct quantum_rate_profile *prof = quantum_find_rate_profile(chip, rate);
+	__le32 req[2];
+	__le32 status = 0;
+	size_t status_len = sizeof(status);
+	unsigned int device_rate, clock_rate;
+	u32 channel_cfg = 0;
+	int ret, i;
+
+	if (!prof)
+		return -EINVAL;
+
+	req[0] = cpu_to_le32(chip->clock_source + 1);
+	req[1] = cpu_to_le32(quantum_rate_to_enum(rate));
+	ret = quantum_tci_send_wait(chip, TCI_CHAN_CTRL,
+				    TCI_CTRL_SET_SAMPLE_RATE,
+				    TCI_CTRL_RSP_SAMPLE_RATE,
+				    req, sizeof(req), &status, &status_len,
+				    250);
+	/* No reply when the device already runs at that rate: check below. */
+	if (ret == -ETIMEDOUT)
+		dev_dbg(&chip->pci->dev, "no reply to %u Hz, reading back\n",
+			rate);
+	else if (ret < 0) {
+		dev_err(&chip->pci->dev, "Set sample rate failed: %d\n", ret);
+		return ret;
+	}
+	if (le32_to_cpu(status)) {
+		dev_err(&chip->pci->dev, "device rejected %u Hz (status %u)\n",
+			rate, le32_to_cpu(status));
+		return -EIO;
+	}
+
+	ret = quantum_get_sample_rate(chip, &device_rate, &clock_rate);
+	if (ret < 0)
+		return ret;
+	if (device_rate != rate) {
+		dev_err(&chip->pci->dev,
+			"requested %u Hz, device reports %u Hz (clock %u Hz)\n",
+			rate, device_rate, clock_rate);
+		return -EIO;
+	}
+
+	for (i = 0; i < 100; i++) {
+		channel_cfg = quantum_read32(chip, QUANTUM_REG_CHANNEL_COUNTS);
+		if (((channel_cfg >> 8) & 0xff) == prof->playback_channels &&
+		    (channel_cfg & 0xff) == prof->capture_channels)
+			break;
+		usleep_range(1000, 2000);
+	}
+	if (i == 100) {
+		dev_err(&chip->pci->dev,
+			"%u Hz: channel register 0x%08x, expected %u out/%u in\n",
+			rate, channel_cfg, prof->playback_channels,
+			prof->capture_channels);
+		return -EIO;
+	}
+
+	dev_info(&chip->pci->dev, "sample rate %u Hz, %u out/%u in\n",
+		 rate, prof->playback_channels, prof->capture_channels);
+	return 0;
+}
+
+/* Set the sample rate. The 2626 takes the rate in Hz. */
 
 int quantum_set_sample_rate(struct quantum_chip *chip, unsigned int rate)
 {
 	__le32 val = cpu_to_le32(rate);
-	__le32 status = 0;
-	size_t status_len = sizeof(status);
 	int ret;
 
 	if (chip->tci_fatal_error)
@@ -445,33 +583,16 @@ int quantum_set_sample_rate(struct quantum_chip *chip, unsigned int rate)
 	if (chip->sample_rate == rate)
 		return 0;
 
-	if (chip->fixed_48k) {
-		if (rate != 48000)
-			return -EINVAL;
-		val = cpu_to_le32(1);
-	}
+	if (chip->rate_profiles)
+		return quantum_set_rate_enum(chip, rate);
 
 	ret = quantum_tci_send_wait(chip, TCI_CHAN_CTRL,
 				    TCI_CTRL_SET_SAMPLE_RATE,
 				    TCI_CTRL_RSP_SAMPLE_RATE,
-				    &val, sizeof(val), &status, &status_len,
-				    chip->fixed_48k ? 250 : 1000);
-	if (ret == -ETIMEDOUT && chip->fixed_48k) {
-		dev_dbg(&chip->pci->dev,
-			"no reply to rate %u Hz: device already at that rate\n",
-			rate);
-		chip->sample_rate = rate;
-		return 0;
-	}
+				    &val, sizeof(val), NULL, NULL, 1000);
 	if (ret < 0) {
 		dev_err(&chip->pci->dev, "Set sample rate failed: %d\n", ret);
 		return ret;
-	}
-	if (chip->fixed_48k && status_len >= sizeof(status) &&
-	    le32_to_cpu(status)) {
-		dev_err(&chip->pci->dev, "device rejected %u Hz (status %u)\n",
-			rate, le32_to_cpu(status));
-		return -EIO;
 	}
 
 	chip->sample_rate = rate;
