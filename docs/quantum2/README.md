@@ -56,7 +56,7 @@ cp docs/quantum2/pipewire/60-quantum2-stereo.conf ~/.config/pipewire/pipewire.co
 systemctl --user restart wireplumber pipewire
 ```
 
-This creates a "Quantum 2 Main Out 1/2" sink that loops into AUX0/AUX1. The loopback has been in daily use. The WirePlumber node-name rule is new and untested.
+This creates a "Quantum 2 Main Out 1/2" sink that loops into AUX0/AUX1. Tested: with HDMI set as the default sink, the loopback still links to `quantum2_multichannel_out` by name.
 
 ## Not done yet
 
