@@ -2,7 +2,7 @@
 
 This fork adds the original Thunderbolt 2 **Quantum 2** to the snd-quantum RFC driver. Upstream has only been verified on the Quantum 2626 (`1c67:0104`).
 
-**Status (2026-10-12):** working for playback. TCI handshake OK, LED solid blue, ALSA card `Quantum2`, PipeWire streams 24 channels at 48 kHz. Capture opens but has not been tested with real input yet.
+**Status (2026-10-12):** working for playback. TCI handshake OK, LED solid blue, ALSA card `Quantum2`, PipeWire streams 24 channels at 48 kHz. Capture opens but has not been tested with real input yet. **48 kHz only for now** (see Sample rate below).
 
 Test machine: Mac Pro 7,1 (2019), Titan Ridge TB3 controller with a TB3↔TB2 adapter, CachyOS, kernels 7.2.9 (clang-built) and 6.18-lts.
 
@@ -11,6 +11,10 @@ Test machine: Mac Pro 7,1 (2019), Titan Ridge TB3 controller with a TB3↔TB2 ad
 - Adds PCI ID `1c67:0102` ("Quantum 2").
 - The PCM channel count comes from `QUANTUM_REG_CHANNEL_COUNTS` (0x10200) instead of the 2626's hard-coded 26. The DMA path already reads this register.
 - Adds `dkms.conf`, and the Makefile builds with clang (`LLVM=1`) or gcc to match the target kernel's config.
+- Sample rate (all models): the cached rate starts unknown instead of an assumed 48 kHz, so the first stream always sends the rate command. Clock events are decoded as a 1-based rate index when they carry one.
+- Sample rate (Quantum 2): 48 kHz only, with the status word checked; see [Sample rate](#sample-rate).
+- Preallocates 512 KiB per PCM stream instead of 64 KiB. With 24 channels, 64 KiB capped the buffer at 640 frames.
+- Debug output (`dyndbg`) hex-dumps TCI payloads in both directions.
 
 ## Hardware facts
 
@@ -27,6 +31,21 @@ From a read-only BAR0 probe with no driver bound (`captures/probe-regs_2026-10-1
 
 - BAR0 is 1 MiB of MMIO, PCI class 0401, the same layout as the 2626. The TB2-era FPGA speaks the same TCI protocol.
 - **Output map (checked by ear):** DMA channel 1 goes to rear line out 1, channel 2 to rear line out 2. The front headphone jack mirrors 1/2 in hardware, and its level knob has to be up. Channels 3–8 are silent on the headphones.
+
+## Sample rate
+
+The driver runs the Quantum 2 at **48 kHz only**. The Windows driver supports 44.1–192 kHz, so the hardware can do more; the Linux command for it isn't known yet.
+
+What the RFC's `SET_SAMPLE_RATE` (channel 0x31, code 0x32) does on this FPGA (image `0x01010017`):
+
+- A rate in Hz, which the 2626 uses, gets a generic status reply with status word `1` and leaves the clock alone. The RFC driver ignored that status, and it also assumed the device starts at 48 kHz and never sent the command. The device kept its power-on rate (44.1 kHz here) while ALSA ran at 48 kHz: an 8% drift that PipeWire corrected with audible resync clicks.
+- Of payloads 0–6 (and several 8-byte forms) only `1` is accepted: status `0`, a clock event `{source 1, rate 2}`, and the clock switches to 48 kHz. Everything else gets status `1`.
+- Asked for the rate it is already running at, the device sends no reply at all.
+- Clock events report a 1-based rate index (`2` = 48 kHz), not Hz.
+- `GET_SAMPLE_RATE` (0x31) answers with two words that aren't a plain rate: `{1, 0}` at 44.1 kHz and `{0, 0}` at 48 kHz.
+
+So on the Quantum 2 the driver offers ALSA only 48 kHz, sends `1`, checks the status word, and treats a missing reply as "already at 48 kHz". PipeWire resamples other rates in software. The real clock can be checked by comparing `hw_ptr` in `/proc/asound/Quantum2/pcm0p/sub0/status` against wall time.
+
 
 ## Thunderbolt notes
 
@@ -77,9 +96,10 @@ systemctl --user restart wireplumber pipewire
 
 ## Not done yet
 
+- Find how to select 44.1–192 kHz on the Quantum 2. Lead: the clock event is `{source, rate}`, so `SET_CLOCK_SOURCE` may take the same pair.
 - Verify Line Out 3/4 and the inputs, then map S/PDIF and ADAT in the UCM profile.
 - Capture testing with real inputs, and MIDI.
-- The interrupt rate is about 1,380/s with a 128-frame period at 48 kHz, roughly 3.7× the period rate. CPU cost is negligible, but it's worth understanding.
+- The hardware interrupts every 32 frames (about 1,500/s at 48 kHz), independent of the ALSA period. CPU cost is negligible.
 
 ## Files
 

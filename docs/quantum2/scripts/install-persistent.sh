@@ -14,10 +14,11 @@ UUID=$(boltctl list | awk '/Quantum 2/{f=1} f&&/uuid/{print $3; exit}')
 [ -n "$UUID" ] || { echo "Quantum 2 not found in 'boltctl list'"; exit 1; }
 
 echo "== 1. Thunderbolt: enroll Quantum 2 ($UUID), auto-authorize on connect"
-if boltctl info "$UUID" | grep -q 'stored: *yes'; then
-    echo "already enrolled"
-else
+# Enrolled devices show "stored: <date>", unenrolled ones "stored: no".
+if boltctl info "$UUID" | grep -E 'stored: +no$' >/dev/null; then
     boltctl enroll --policy auto "$UUID"
+else
+    echo "already enrolled"
 fi
 
 echo "== 2. Copy driver source to /usr/src/$NAME-$VER"
