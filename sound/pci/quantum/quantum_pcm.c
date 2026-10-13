@@ -2,12 +2,6 @@
 /* Copyright (C) 2026 Nicholas Johnson */
 #include "quantum.h"
 
-static const unsigned int quantum_channel_counts[] = { 26 };
-static const struct snd_pcm_hw_constraint_list quantum_channel_list = {
-	.count = ARRAY_SIZE(quantum_channel_counts),
-	.list = quantum_channel_counts,
-};
-
 static const unsigned int quantum_rates[] = {
 	44100, 48000, 88200, 96000, 176400, 192000,
 };
@@ -74,9 +68,6 @@ static int quantum_pcm_open(struct snd_pcm_substream *ss)
 	if (!channels)
 		return -EIO;
 
-	if (channels != 26)
-		return -EIO;
-
 	runtime->hw.info = SNDRV_PCM_INFO_MMAP |
 			   SNDRV_PCM_INFO_MMAP_VALID |
 			   SNDRV_PCM_INFO_INTERLEAVED |
@@ -100,11 +91,6 @@ static int quantum_pcm_open(struct snd_pcm_substream *ss)
 
 	err = snd_pcm_hw_constraint_list(runtime, 0, SNDRV_PCM_HW_PARAM_RATE,
 					 &quantum_rate_list);
-	if (err < 0)
-		return err;
-
-	err = snd_pcm_hw_constraint_list(runtime, 0, SNDRV_PCM_HW_PARAM_CHANNELS,
-					 &quantum_channel_list);
 	if (err < 0)
 		return err;
 

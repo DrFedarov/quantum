@@ -66,9 +66,17 @@ static const struct quantum_device_entry quantum_2626_model = {
 	.name = "PreSonus Quantum 2626",
 };
 
+static const struct quantum_device_entry quantum_2_model = {
+	.card_id = "Quantum2",
+	.name = "PreSonus Quantum 2",
+};
+
 static const struct pci_device_id quantum_ids[] = {
 	{ PCI_DEVICE(0x1c67, 0x0104),
 	  .driver_data = (kernel_ulong_t)&quantum_2626_model },
+	/* Quantum 2 (Thunderbolt 2): unverified, channel counts read from hardware */
+	{ PCI_DEVICE(0x1c67, 0x0102),
+	  .driver_data = (kernel_ulong_t)&quantum_2_model },
 	{ }
 };
 MODULE_DEVICE_TABLE(pci, quantum_ids);
