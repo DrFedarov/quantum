@@ -166,6 +166,7 @@ struct quantum_chip {
 	void __iomem *iobase;
 	const char *model_id;
 	const char *model_name;
+	bool fixed_48k;
 
 	/* Index into index[]/id[]/enable[]; see quantum_release_card_slot(). */
 	int card_slot;

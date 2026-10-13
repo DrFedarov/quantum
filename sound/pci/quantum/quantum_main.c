@@ -59,6 +59,8 @@ static void quantum_disable_interrupts(struct quantum_chip *chip);
 struct quantum_device_entry {
 	const char *card_id;
 	const char *name;
+	/* Rate command only selects 48 kHz (Quantum 2 firmware) */
+	bool fixed_48k;
 };
 
 static const struct quantum_device_entry quantum_2626_model = {
@@ -69,12 +71,13 @@ static const struct quantum_device_entry quantum_2626_model = {
 static const struct quantum_device_entry quantum_2_model = {
 	.card_id = "Quantum2",
 	.name = "PreSonus Quantum 2",
+	.fixed_48k = true,
 };
 
 static const struct pci_device_id quantum_ids[] = {
 	{ PCI_DEVICE(0x1c67, 0x0104),
 	  .driver_data = (kernel_ulong_t)&quantum_2626_model },
-	/* Quantum 2 (Thunderbolt 2): unverified, channel counts read from hardware */
+	/* Quantum 2 (Thunderbolt 2): channel counts read from hardware */
 	{ PCI_DEVICE(0x1c67, 0x0102),
 	  .driver_data = (kernel_ulong_t)&quantum_2_model },
 	{ }
@@ -121,7 +124,8 @@ static void quantum_device_init(struct quantum_chip *chip)
 	dev_dbg(&chip->pci->dev, "DFU payload size: 0x%08x\n",
 		dfu_payload_size);
 
-	chip->sample_rate = 48000;
+	/* Unknown until the first rate command or clock event. */
+	chip->sample_rate = 0;
 	chip->clock_source = CLK_SOURCE_INTERNAL;
 	chip->powered_on = true;
 }
@@ -573,6 +577,7 @@ static int snd_quantum_create(struct snd_card *card, struct pci_dev *pci,
 	chip->pci = pci;
 	chip->model_id = model->card_id;
 	chip->model_name = model->name;
+	chip->fixed_48k = model->fixed_48k;
 	chip->irq = -1;
 	atomic_set(&chip->pending_interrupts, 0);
 	chip->device_gone = 0;

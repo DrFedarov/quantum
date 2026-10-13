@@ -31,7 +31,8 @@ static int quantum_srate_get(struct snd_kcontrol *k,
 		(chip->sample_rate == 48000) ? 1 :
 		(chip->sample_rate == 88200) ? 2 :
 		(chip->sample_rate == 96000) ? 3 :
-		(chip->sample_rate == 176400) ? 4 : 5;
+		(chip->sample_rate == 176400) ? 4 :
+		(chip->sample_rate == 192000) ? 5 : 1;
 
 	return 0;
 }

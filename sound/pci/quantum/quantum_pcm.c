@@ -81,6 +81,12 @@ static int quantum_pcm_open(struct snd_pcm_substream *ss)
 			    SNDRV_PCM_RATE_192000;
 	runtime->hw.rate_min = 44100;
 	runtime->hw.rate_max = 192000;
+	if (chip->fixed_48k) {
+		/* Quantum 2: SET_SAMPLE_RATE only selects 48 kHz (see quantum_tci.c). */
+		runtime->hw.rates = SNDRV_PCM_RATE_48000;
+		runtime->hw.rate_min = 48000;
+		runtime->hw.rate_max = 48000;
+	}
 	runtime->hw.channels_min = channels;
 	runtime->hw.channels_max = channels;
 	runtime->hw.period_bytes_min = 32 * channels * sizeof(s32);
@@ -588,7 +594,7 @@ int snd_quantum_pcm_new(struct quantum_chip *chip)
 			&quantum_ops);
 
 	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV_SG,
-					      &chip->pci->dev, 64 * 1024,
+					      &chip->pci->dev, 512 * 1024,
 					      16 * 1024 * 1024);
 
 	return 0;

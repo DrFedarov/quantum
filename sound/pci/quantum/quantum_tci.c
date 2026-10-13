@@ -2,6 +2,12 @@
 /* Copyright (C) 2026 Nicholas Johnson */
 #include "quantum.h"
 
+/* Rate order used by the Quantum 2 clock event (1-based). */
+static const unsigned int quantum_rate_table[] = {
+	44100, 48000, 88200, 96000, 176400, 192000
+};
+
+
 static int quantum_get_tx_slot(struct quantum_chip *chip, u32 *slot)
 {
 	u32 hw = quantum_read32(chip, QUANTUM_REG_TX_SLOT_STATUS);
@@ -128,6 +134,10 @@ void quantum_process_rx_messages(struct quantum_chip *chip)
 		dev_dbg(&chip->pci->dev,
 			"TCI RX: slot=%d tid=%u channel=0x%02x code=0x%02x length=%u\n",
 			slot, tid, channel, code, header_len);
+		if (channel != TCI_CHAN_MIDI_RX)
+			print_hex_dump_debug("snd-quantum TCI RX payload: ",
+					     DUMP_PREFIX_OFFSET, 16, 1, payload,
+					     min_t(size_t, payload_len, 64), false);
 
 		if (channel == TCI_CHAN_CMD_RESP || channel == TCI_CHAN_CTRL) {
 			struct quantum_tci_cmd *cmd, *tmp;
@@ -169,6 +179,9 @@ void quantum_process_rx_messages(struct quantum_chip *chip)
 							wire_cs);
 						break;
 					}
+					/* The Quantum 2 reports a 1-based rate index. */
+					if (sr >= 1 && sr <= ARRAY_SIZE(quantum_rate_table))
+						sr = quantum_rate_table[sr - 1];
 					dev_dbg(&chip->pci->dev,
 						"clock event: source=%u rate=%u\n",
 						wire_cs - 1, sr);
@@ -274,8 +287,12 @@ static int quantum_tci_send_wait(struct quantum_chip *chip, u8 channel,
 	hdr->tid = cpu_to_le16(cmd.tid);
 
 	/* Payload (if any) goes right after the header */
-	if (tx_data && tx_len)
+	if (tx_data && tx_len) {
 		memcpy((u8 *)hdr + sizeof(struct tci_header), tx_data, tx_len);
+		print_hex_dump_debug("snd-quantum TCI TX payload: ",
+				     DUMP_PREFIX_OFFSET, 16, 1, tx_data,
+				     min_t(size_t, tx_len, 64), false);
+	}
 
 	/* Make coherent TX contents visible before ringing the doorbell. */
 	dma_wmb();
@@ -305,9 +322,15 @@ static int quantum_tci_send_wait(struct quantum_chip *chip, u8 channel,
 	spin_unlock_irqrestore(&chip->cmd_lock, flags);
 
 	if (!ret) {
-		dev_err(&chip->pci->dev,
-			"command response timed out (channel=0x%02x code=0x%02x)\n",
-			channel, code);
+		/* Expected: the Quantum 2 ignores a no-op rate change. */
+		if (chip->fixed_48k && channel == TCI_CHAN_CTRL &&
+		    code == TCI_CTRL_SET_SAMPLE_RATE)
+			dev_dbg(&chip->pci->dev,
+				"no reply to SET_SAMPLE_RATE\n");
+		else
+			dev_err(&chip->pci->dev,
+				"command response timed out (channel=0x%02x code=0x%02x)\n",
+				channel, code);
 		return -ETIMEDOUT;
 	}
 	if (cmd.status)
@@ -398,11 +421,22 @@ int quantum_get_serial_number(struct quantum_chip *chip)
 	return 0;
 }
 
-/* Set the sample rate */
+/*
+ * Set the sample rate.
+ *
+ * The 2626 takes the rate in Hz. The Quantum 2 (FPGA image 0x01010017)
+ * rejects Hz, and of payloads 0-6 accepts only 1, which selects 48 kHz;
+ * every other value gets a non-zero status word and leaves the clock alone.
+ * It answers a real change with status 0 (plus a clock event), and does
+ * not answer at all when already at 48 kHz. The PCM therefore offers only
+ * 48 kHz on this model.
+ */
 
 int quantum_set_sample_rate(struct quantum_chip *chip, unsigned int rate)
 {
 	__le32 val = cpu_to_le32(rate);
+	__le32 status = 0;
+	size_t status_len = sizeof(status);
 	int ret;
 
 	if (chip->tci_fatal_error)
@@ -411,13 +445,33 @@ int quantum_set_sample_rate(struct quantum_chip *chip, unsigned int rate)
 	if (chip->sample_rate == rate)
 		return 0;
 
+	if (chip->fixed_48k) {
+		if (rate != 48000)
+			return -EINVAL;
+		val = cpu_to_le32(1);
+	}
+
 	ret = quantum_tci_send_wait(chip, TCI_CHAN_CTRL,
 				    TCI_CTRL_SET_SAMPLE_RATE,
 				    TCI_CTRL_RSP_SAMPLE_RATE,
-				    &val, sizeof(val), NULL, NULL, 1000);
+				    &val, sizeof(val), &status, &status_len,
+				    chip->fixed_48k ? 250 : 1000);
+	if (ret == -ETIMEDOUT && chip->fixed_48k) {
+		dev_dbg(&chip->pci->dev,
+			"no reply to rate %u Hz: device already at that rate\n",
+			rate);
+		chip->sample_rate = rate;
+		return 0;
+	}
 	if (ret < 0) {
 		dev_err(&chip->pci->dev, "Set sample rate failed: %d\n", ret);
 		return ret;
+	}
+	if (chip->fixed_48k && status_len >= sizeof(status) &&
+	    le32_to_cpu(status)) {
+		dev_err(&chip->pci->dev, "device rejected %u Hz (status %u)\n",
+			rate, le32_to_cpu(status));
+		return -EIO;
 	}
 
 	chip->sample_rate = rate;
