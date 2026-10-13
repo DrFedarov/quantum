@@ -76,11 +76,18 @@ $(MODULE_NAME_NEW)-objs := sound/pci/quantum/quantum_main.o \
                            sound/pci/quantum/quantum_pcm.o \
                            sound/pci/quantum/quantum_tci.o
 
+# Match the target kernel's compiler (CachyOS main = clang, LTS = gcc)
+ifeq ($(origin LLVM),undefined)
+    ifneq ($(shell grep -s '^CONFIG_CC_IS_CLANG=y' $(KDIR)/.config),)
+        LLVM := 1
+    endif
+endif
+
 all:
-	$(MAKE) -C $(KDIR) M=$(PWD) modules
+	$(MAKE) -C $(KDIR) M=$(PWD) $(if $(LLVM),LLVM=$(LLVM)) modules
 
 clean:
-	$(MAKE) -C $(KDIR) M=$(PWD) clean
+	$(MAKE) -C $(KDIR) M=$(PWD) $(if $(LLVM),LLVM=$(LLVM)) clean
 
 # --- Module Installation Targets ---
 
