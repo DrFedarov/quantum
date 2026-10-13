@@ -1,0 +1,18 @@
+ * PreSonus Audio Electronics Quantum 2
+   |- type:          peripheral
+   |- name:          Quantum 2
+   |- vendor:        PreSonus Audio Electronics
+   |- uuid:          <redacted>
+   |- dbus path:     /org/freedesktop/bolt/devices/<redacted>
+   |- generation:    Thunderbolt 2
+   |- status:        authorized
+   |  |- domain:          <redacted>
+   |  |- parent:          <redacted>
+   |  |- syspath:    /sys/devices/pci0000:13/0000:13:00.0/0000:14:00.0/0000:15:0e.0/0000:c4:00.0/0000:c5:00.0/0000:c6:00.0/domain1/1-0/1-3
+   |  |- rx speed:   20 Gb/s = 2 lanes * 10 Gb/s
+   |  |- tx speed:   20 Gb/s = 2 lanes * 10 Gb/s
+   |  `- authflags:  none
+   |- authorized:    Tue 13 Oct 2026 12:34:57 AM
+   |- connected:     Tue 13 Oct 2026 12:16:43 AM
+   `- stored:        no
+

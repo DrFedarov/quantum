@@ -1,0 +1,7 @@
+e6:00.0 Multimedia audio controller [0401]: PreSonus Audio Electronics Inc. Quantum 2 [1c67:0102]
+	Subsystem: PreSonus Audio Electronics Inc. Quantum 2 [1c67:0102]
+	Control: I/O- Mem- BusMaster- SpecCycle- MemWINV- VGASnoop- ParErr- Stepping- SERR- FastB2B- DisINTx-
+	Status: Cap+ 66MHz- UDF- FastB2B- ParErr- DEVSEL=fast >TAbort- <TAbort- <MAbort- >SERR- <PERR- INTx-
+	Region 0: Memory at 75800000 (32-bit, non-prefetchable) [disabled] [size=1M]
+	Capabilities: <access denied>
+
