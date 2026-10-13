@@ -1,0 +1,77 @@
+name: Problem report
+description: The driver doesn't load, there's no sound, or something else is wrong.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing. The commands below need the Quantum connected and powered on.
+        Setup steps are in [docs/quantum2](https://github.com/DrFedarov/quantum2/blob/quantum2/docs/quantum2/README.md).
+  - type: dropdown
+    id: model
+    attributes:
+      label: Interface
+      options:
+        - Quantum 2 (Thunderbolt 2, 1c67:0102)
+        - Quantum 2626 (1c67:0104)
+        - Other Quantum model
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: kernel
+    attributes:
+      label: Kernel and distribution
+      description: Output of `uname -r`, plus your distribution.
+      placeholder: 7.2.9-2-cachyos, CachyOS
+    validations:
+      required: true
+  - type: input
+    id: computer
+    attributes:
+      label: Computer and Thunderbolt connection
+      description: Computer model, and any adapter between it and the Quantum.
+      placeholder: Mac Pro 7,1, Apple TB3-to-TB2 adapter
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Driver version
+      description: Output of `dkms status | grep quantum`, or `git rev-parse --short HEAD` if you built it by hand.
+    validations:
+      required: true
+  - type: textarea
+    id: dmesg
+    attributes:
+      label: Kernel log
+      description: Output of `sudo dmesg | grep -iE 'snd-quantum|snd_quantum|thunderbolt'`
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: cards
+    attributes:
+      label: Sound cards and PCI
+      description: Output of `cat /proc/asound/cards` and `lspci -nn | grep -i 1c67`
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: bolt
+    attributes:
+      label: Thunderbolt authorization
+      description: Output of `boltctl list`. You can remove the UUIDs.
+      render: text
+  - type: textarea
+    id: pipewire
+    attributes:
+      label: PipeWire (if the problem is in the desktop rather than ALSA)
+      description: Output of `wpctl status`
+      render: text

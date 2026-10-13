@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Upstream driver (Quantum 2626 and the RFC)
+    url: https://github.com/EMATech/quantum
+    about: Problems that also happen on the 2626 belong in the upstream project.

@@ -1,0 +1,54 @@
+name: Works for me
+description: Report that the driver works on your setup, so others know which hardware is confirmed.
+labels: ["works-for-me"]
+body:
+  - type: markdown
+    attributes:
+      value: Confirmations from other computers, kernels and adapters help other users know what to expect.
+  - type: dropdown
+    id: model
+    attributes:
+      label: Interface
+      options:
+        - Quantum 2 (Thunderbolt 2, 1c67:0102)
+        - Quantum 2626 (1c67:0104)
+        - Other Quantum model
+    validations:
+      required: true
+  - type: input
+    id: kernel
+    attributes:
+      label: Kernel and distribution
+      placeholder: 7.2.9-2-cachyos, CachyOS
+    validations:
+      required: true
+  - type: input
+    id: computer
+    attributes:
+      label: Computer and Thunderbolt connection
+      placeholder: Mac Pro 7,1, Apple TB3-to-TB2 adapter
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Driver version
+      description: Output of `dkms status | grep quantum`, or the git commit you built.
+    validations:
+      required: true
+  - type: checkboxes
+    id: tested
+    attributes:
+      label: What you tested
+      options:
+        - label: Playback on Main Out 1/2 or headphones
+        - label: Line Out 3/4
+        - label: Recording from the mic/instrument inputs
+        - label: Rates other than 48 kHz
+        - label: S/PDIF or ADAT
+        - label: MIDI
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything else, such as the apps you used or problems you worked around.
