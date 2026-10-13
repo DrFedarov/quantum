@@ -7,8 +7,10 @@ Linux kernel ALSA driver for PreSonus™ Quantum Thunderbolt™ audio interfaces
 Currently, only the **PreSonus Quantum 2626** is supported.
 Work is in progress to extend support to the rest of the Quantum product family.
 
-> **This fork** adds the Thunderbolt 2 **Quantum 2** (`1c67:0102`), which works
-> for playback (24 out / 22 in). See [docs/quantum2](docs/quantum2/README.md).
+> **This fork adds Linux support for the original PreSonus Quantum 2**
+> (Thunderbolt 2, PCI ID `1c67:0102`): 24 out / 22 in at 44.1–48 kHz, all rates
+> up to 192 kHz, DKMS install, and a PipeWire/UCM profile with named outputs.
+> Setup and status: [docs/quantum2](docs/quantum2/README.md).
 
 ## Origin & Attribution
 
