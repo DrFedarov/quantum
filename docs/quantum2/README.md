@@ -45,9 +45,28 @@ sudo docs/quantum2/scripts/install-persistent.sh
 
 After changing the driver, bump `PACKAGE_VERSION` in `dkms.conf` and re-run the persistent install. The module autoloads through its PCI alias.
 
-## PipeWire: stereo "Main Out 1/2" sink
+## PipeWire: UCM profile
 
-There's no UCM profile for the Quantum 2 yet, so PipeWire shows one 24-channel "Multichannel" sink. As a stopgap:
+`ucm2/` holds an ALSA UCM profile, so PipeWire shows named devices instead of one 24-channel "Multichannel" sink:
+
+```sh
+sudo docs/quantum2/scripts/install-ucm.sh   # copies into /usr/share/alsa/ucm2
+systemctl --user restart wireplumber pipewire pipewire-pulse
+```
+
+| PipeWire device | Channels | Status |
+|---|---|---|
+| Main Out 1/2 + Headphones | playback 0-1 | verified by ear |
+| Line Out 3/4 | playback 2-3 | assumed (analog first, as on the 2626) |
+| Mic/Inst 1, Mic/Inst 2, Mic/Line 3, Mic/Line 4 | capture 0-3 | assumed |
+
+The outputs and inputs share one hardware stream per direction through `dshare`/`dsnoop` (48 kHz, 128-frame periods). S/PDIF and ADAT channels are left unmapped until their order is verified.
+
+`conf.d/snd-quantum/snd-quantum.conf` selects the profile only when the ALSA card id is `Quantum2`. Other Quantum models fall back to PipeWire's plain multichannel profile.
+
+### Without UCM: stereo loopback stopgap
+
+If you'd rather not install system files, `pipewire/` and `wireplumber/` create a "Quantum 2 Main Out 1/2" sink that loops into AUX0/AUX1. Don't combine it with the UCM profile, because the WirePlumber rule would give every UCM sink the same name.
 
 ```sh
 mkdir -p ~/.config/wireplumber/wireplumber.conf.d ~/.config/pipewire/pipewire.conf.d
@@ -56,11 +75,9 @@ cp docs/quantum2/pipewire/60-quantum2-stereo.conf ~/.config/pipewire/pipewire.co
 systemctl --user restart wireplumber pipewire
 ```
 
-This creates a "Quantum 2 Main Out 1/2" sink that loops into AUX0/AUX1. Tested: with HDMI set as the default sink, the loopback still links to `quantum2_multichannel_out` by name.
-
 ## Not done yet
 
-- A UCM profile `Quantum2/HiFi.conf`, adapted from the 2626 one with the channel map corrected.
+- Verify Line Out 3/4 and the inputs, then map S/PDIF and ADAT in the UCM profile.
 - Capture testing with real inputs, and MIDI.
 - The interrupt rate is about 1,380/s with a 128-frame period at 48 kHz, roughly 3.7× the period rate. CPU cost is negligible, but it's worth understanding.
 
@@ -70,4 +87,6 @@ This creates a "Quantum 2 Main Out 1/2" sink that loops into AUX0/AUX1. Tested: 
 - `scripts/load-driver.sh`: authorize, build, insmod, show dmesg
 - `scripts/install-persistent.sh`: boltctl enroll + DKMS install
 - `captures/`: register probe, `lspci -vvv`, `boltctl info` (UUIDs redacted)
-- `pipewire/`, `wireplumber/`: stereo sink stopgap
+- `scripts/install-ucm.sh`: install the UCM profile
+- `ucm2/`: UCM profile (`conf.d/snd-quantum/`, `Quantum2/HiFi.conf`)
+- `pipewire/`, `wireplumber/`: stereo sink stopgap (without UCM only)
